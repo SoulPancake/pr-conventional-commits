@@ -172,9 +172,21 @@ For this configuration, the following PR title is valid: `feat: PROJECT-12345 ad
 
 ### Troubleshooting
 
-- If you encounter an error message: `Error: Resource not accessible by integration`, adjust your repository settings. Go to your repository's settings, navigate to the "Actions" tab, and under the "General" section, update the "Workflow permissions" setting to "Read and Write Permission". This grants the necessary permissions for the action to function correctly.
+- If you encounter an error message: `Error: Resource not accessible by integration`, this typically means the action lacks write permissions. There are several ways to fix this:
 
-- If you need to use a different GitHub token instead of the default `GITHUB_TOKEN`, you can provide your own token as the `token` input to the action.
+  1. **For fork PRs (recommended):** Use `pull_request_target` instead of `pull_request` as the event trigger. This runs the workflow in the context of the base repository, granting write permissions to the `GITHUB_TOKEN` even for PRs from forks. This is safe for this action because it only reads PR metadata (title, number) and does not execute any code from the PR branch.
+
+     ```yaml
+     on:
+       pull_request_target:
+         types: [opened, synchronize, reopened, edited]
+     ```
+
+  2. **For non-fork PRs:** Adjust your repository settings. Go to your repository's settings, navigate to the "Actions" tab, and under the "General" section, update the "Workflow permissions" setting to "Read and Write Permission".
+
+  3. **Custom token:** If you need to use a different GitHub token instead of the default `GITHUB_TOKEN`, you can provide your own token as the `token` input to the action.
+
+  > **Note:** If write permissions are not available (e.g., using `pull_request` with a fork PR), the action will still validate the PR title and report the result — label operations will be skipped with a warning instead of failing the action.
 
 ### Contributing
 
