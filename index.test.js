@@ -1,4 +1,4 @@
-const { getInput, setFailed } = require('@actions/core');
+const { getInput, setFailed, warning } = require('@actions/core');
 const { getOctokit, context } = require('@actions/github');
 const toConventionalChangelogFormat = require('conventional-commits-parser');
 
@@ -322,6 +322,165 @@ describe('getScopeTypes (via checkScope)', () => {
         await myModule.checkScope(commitDetail);
 
         expect(setFailed).toHaveBeenCalledWith('Invalid scope_types input. Expecting a JSON array.');
+    });
+});
+
+describe('isPermissionError', () => {
+    it('should return true for HTTP 403 status errors', () => {
+        const err = new Error('HttpError');
+        err.status = 403;
+        expect(myModule.isPermissionError(err)).toBe(true);
+    });
+
+    it('should return true for "Resource not accessible by integration" message', () => {
+        const err = new Error('Resource not accessible by integration');
+        expect(myModule.isPermissionError(err)).toBe(true);
+    });
+
+    it('should return false for other errors', () => {
+        const err = new Error('Some other error');
+        err.status = 500;
+        expect(myModule.isPermissionError(err)).toBe(false);
+    });
+
+    it('should return false for 404 errors', () => {
+        const err = new Error('Not Found');
+        err.status = 404;
+        expect(myModule.isPermissionError(err)).toBe(false);
+    });
+});
+
+describe('applyLabel permission error handling', () => {
+    beforeEach(() => {
+        context.repo = {
+            owner: 'mockOwner',
+            repo: 'mockRepo',
+        };
+    });
+
+    it('should warn instead of failing when updateLabels throws a permission error', async () => {
+        const mockOctokit = {
+            rest: {
+                issues: {
+                    listLabelsOnIssue: jest.fn().mockRejectedValue(
+                        Object.assign(new Error('Resource not accessible by integration'), { status: 403 })
+                    ),
+                },
+            },
+        };
+
+        getInput.mockImplementation((inputName) => {
+            if (inputName === 'add_label') return 'true';
+            if (inputName === 'custom_labels') return '';
+            if (inputName === 'token') return 'mock-token';
+            if (inputName === 'task_types') return JSON.stringify(['feat', 'fix']);
+            return undefined;
+        });
+
+        getOctokit.mockReturnValue(mockOctokit);
+
+        const pr = { number: 123 };
+        const commitDetail = { type: 'feat', scope: 'login', breaking: false };
+
+        await myModule.applyLabel(pr, commitDetail);
+
+        expect(setFailed).not.toHaveBeenCalled();
+        expect(warning).toHaveBeenCalledWith(
+            expect.stringContaining('Unable to add labels due to insufficient permissions')
+        );
+    });
+
+    it('should rethrow non-permission errors from updateLabels', async () => {
+        const mockOctokit = {
+            rest: {
+                issues: {
+                    listLabelsOnIssue: jest.fn().mockRejectedValue(
+                        Object.assign(new Error('Internal Server Error'), { status: 500 })
+                    ),
+                },
+            },
+        };
+
+        getInput.mockImplementation((inputName) => {
+            if (inputName === 'add_label') return 'true';
+            if (inputName === 'custom_labels') return '';
+            if (inputName === 'token') return 'mock-token';
+            if (inputName === 'task_types') return JSON.stringify(['feat', 'fix']);
+            return undefined;
+        });
+
+        getOctokit.mockReturnValue(mockOctokit);
+
+        const pr = { number: 123 };
+        const commitDetail = { type: 'feat', scope: 'login', breaking: false };
+
+        await expect(myModule.applyLabel(pr, commitDetail)).rejects.toThrow('Internal Server Error');
+        expect(warning).not.toHaveBeenCalled();
+    });
+});
+
+describe('applyScopeLabel permission error handling', () => {
+    beforeEach(() => {
+        context.repo = {
+            owner: 'mockOwner',
+            repo: 'mockRepo',
+        };
+    });
+
+    it('should warn instead of failing when scope label operations throw a permission error', async () => {
+        const mockOctokit = {
+            rest: {
+                issues: {
+                    listLabelsOnIssue: jest.fn().mockRejectedValue(
+                        Object.assign(new Error('Resource not accessible by integration'), { status: 403 })
+                    ),
+                },
+            },
+        };
+
+        getInput.mockImplementation((inputName) => {
+            if (inputName === 'add_scope_label') return 'true';
+            if (inputName === 'token') return 'mock-token';
+            return undefined;
+        });
+
+        getOctokit.mockReturnValue(mockOctokit);
+
+        const pr = { number: 123 };
+        const commitDetail = { type: 'feat', scope: 'login', breaking: false };
+
+        await myModule.applyScopeLabel(pr, commitDetail);
+
+        expect(setFailed).not.toHaveBeenCalled();
+        expect(warning).toHaveBeenCalledWith(
+            expect.stringContaining('Unable to add scope label due to insufficient permissions')
+        );
+    });
+
+    it('should rethrow non-permission errors from scope label operations', async () => {
+        const mockOctokit = {
+            rest: {
+                issues: {
+                    listLabelsOnIssue: jest.fn().mockRejectedValue(
+                        Object.assign(new Error('Internal Server Error'), { status: 500 })
+                    ),
+                },
+            },
+        };
+
+        getInput.mockImplementation((inputName) => {
+            if (inputName === 'add_scope_label') return 'true';
+            if (inputName === 'token') return 'mock-token';
+            return undefined;
+        });
+
+        getOctokit.mockReturnValue(mockOctokit);
+
+        const pr = { number: 123 };
+        const commitDetail = { type: 'feat', scope: 'login', breaking: false };
+
+        await expect(myModule.applyScopeLabel(pr, commitDetail)).rejects.toThrow('Internal Server Error');
+        expect(warning).not.toHaveBeenCalled();
     });
 });
 

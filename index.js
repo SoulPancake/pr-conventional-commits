@@ -1,4 +1,4 @@
-const { getInput, setFailed } = require('@actions/core');
+const { getInput, setFailed, warning } = require('@actions/core');
 const { getOctokit, context } = require('@actions/github');
 const parser = require('conventional-commits-parser')
 const githubApi = require('./githubapi');
@@ -128,6 +128,18 @@ async function checkTextMatches(regex, text) {
 }
 
 /**
+ * Check if an error is a GitHub API permission error.
+ * This commonly occurs when the action runs on a pull request from a fork,
+ * where the GITHUB_TOKEN has read-only permissions.
+ * @param {Error} err The error to check.
+ * @returns {boolean} True if the error is a permission error.
+ */
+function isPermissionError(err) {
+    return err.status === 403 ||
+        (err.message && err.message.includes('Resource not accessible by integration'));
+}
+
+/**
  * Apply labels to the pull request based on the details of the commit and any custom labels provided.
  * @param {Object} pr The pull request object.
  * @param {Object} commitDetail The object with details of the commit.
@@ -143,7 +155,15 @@ async function applyLabel(pr, commitDetail) {
     if (customLabels === null) {
         return;
     }
-    await updateLabels(pr, commitDetail, customLabels);
+    try {
+        await updateLabels(pr, commitDetail, customLabels);
+    } catch (err) {
+        if (isPermissionError(err)) {
+            warning('Unable to add labels due to insufficient permissions. This can happen when the PR is from a fork. The conventional commit validation still passed. To fix this, consider using the `pull_request_target` event trigger or providing a token with write permissions.');
+        } else {
+            throw err;
+        }
+    }
 }
 
 function parseCustomLabels(customLabelsInput) {
@@ -185,13 +205,21 @@ async function applyScopeLabel(pr, commitDetail) {
     if (addLabelEnabled !== undefined && addLabelEnabled.toLowerCase() === 'false' || scopeName === undefined || scopeName === "") {
         return;
     }
-    const octokit = getOctokit(getInput('token'));
-    const currentLabelsResult = await githubApi.getCurrentLabelsResult(octokit, pr);
-    const currentLabels = currentLabelsResult.data.map(label => label.name);
-    if (currentLabels.includes(scopeName)) {
-        return;
+    try {
+        const octokit = getOctokit(getInput('token'));
+        const currentLabelsResult = await githubApi.getCurrentLabelsResult(octokit, pr);
+        const currentLabels = currentLabelsResult.data.map(label => label.name);
+        if (currentLabels.includes(scopeName)) {
+            return;
+        }
+        await githubApi.createOrAddLabel(octokit, scopeName, pr);
+    } catch (err) {
+        if (isPermissionError(err)) {
+            warning('Unable to add scope label due to insufficient permissions. This can happen when the PR is from a fork.');
+        } else {
+            throw err;
+        }
     }
-    githubApi.createOrAddLabel(octokit, scopeName, pr)
 }
 
 /**
@@ -238,5 +266,7 @@ module.exports = {
     checkScope,
     checkTextMatches,
     applyLabel,
-    updateLabels
+    applyScopeLabel,
+    updateLabels,
+    isPermissionError
 };
